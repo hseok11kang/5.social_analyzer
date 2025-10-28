@@ -1,4 +1,4 @@
-# 📊 Social Analyzer — (v0.9.6, Streamlit) — GitHub/Streamlit Cloud 배포용 자산 경로 패치 포함
+# 📊 Social Analyzer — (v0.9.6, Streamlit)
 # ------------------------------------------------------------
 # 설치:
 # pip install -U streamlit pandas numpy altair pillow wordcloud matplotlib python-dateutil google-genai
@@ -8,7 +8,6 @@
 
 import os, re, html, time, base64, hashlib
 from datetime import datetime, timedelta, date
-from pathlib import Path  # ★ 추가: 경로 유틸
 
 import numpy as np
 import pandas as pd
@@ -17,12 +16,6 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from PIL import Image
 from dateutil.relativedelta import relativedelta
-
-# ---------- 자산(이미지) 경로 설정 ----------
-# 앱 파일(이 파일)과 같은 폴더 기준으로 image/ 폴더를 바라보도록 고정
-BASE_DIR = Path(__file__).resolve().parent
-ASSET_DIR = BASE_DIR / "image"
-ALLOWED_EXT = [".png", ".jpg", ".jpeg", ".webp"]  # 대소문자 모두 허용(아래 asset_candidates에서 처리)
 
 # wordcloud(없으면 막대그래프 대체)
 try:
@@ -82,6 +75,16 @@ display:flex;flex-direction:column;justify-content:space-between;min-height:110p
 </style>
 """
 st.markdown(CARD_CSS, unsafe_allow_html=True)
+
+# ⬇⬇⬇ 추가: 상단의 불필요한 박스(빈 진행바/슬라이더 형태) 제거
+TOP_BAR_FIX = """
+<style>
+div[role="progressbar"] { display: none !important; }
+[data-testid="stStatusWidget"] div[role="progressbar"] { display: none !important; }
+</style>
+"""
+st.markdown(TOP_BAR_FIX, unsafe_allow_html=True)
+# ⬆⬆⬆ 여기까지만 추가
 
 ICON = {"X":"<span class='icon'>𝕏</span>", "FB":"<span class='icon'>📘</span>", "IG":"<span class='icon'>📸</span>"}
 PF_NAME = {"X":"X", "FB":"Facebook", "IG":"Instagram"}
@@ -145,41 +148,11 @@ def fmt_dt(dt):
     if s.startswith("0"): s = s[1:]
     return s
 
-# ---------- 이미지 유틸(대소문자/확장자 무시 + image/ 폴더 강제) ----------
+# 이미지 유틸
 def find_first_existing(paths: list[str]) -> str | None:
-    """여러 경로 후보 중 먼저 존재하는 것을 반환."""
     for p in paths:
-        if p and os.path.exists(p):
-            return p
+        if p and os.path.exists(p): return p
     return None
-
-def asset_candidates(name: str) -> list[str]:
-    """
-    이미지 파일 후보 경로 목록을 만들어줌.
-    - name: 'sample4' 또는 'sample4.png' 등 다양하게 가능.
-    - 대소문자/확장자 차이를 모두 시도.
-    - 최종 반환은 문자열 경로 리스트.
-    """
-    p = Path(name)
-
-    # 확장자 있으면 그 확장자 대/소문자, 파일명 대/소문자 조합 모두 시도
-    if p.suffix:
-        bases = {p.stem, p.stem.lower(), p.stem.upper(), p.stem.capitalize()}
-        exts  = {p.suffix.lower(), p.suffix.upper()}
-        cands = []
-        for b in bases:
-            for e in exts:
-                cands.append(str(ASSET_DIR / f"{b}{e}"))
-        return cands
-
-    # 확장자 없으면 허용 확장자 전부(대/소문자) + 파일명 대/소문자 조합 시도
-    bases = {p.name, p.name.lower(), p.name.upper(), p.name.capitalize()}
-    exts  = set(ALLOWED_EXT + [e.upper() for e in ALLOWED_EXT])
-    cands = []
-    for b in bases:
-        for e in exts:
-            cands.append(str(ASSET_DIR / f"{b}{e}"))
-    return cands
 
 def load_crop_to_ratio(img_path: str, ratio=(16,9)) -> Image.Image:
     im = Image.open(img_path).convert("RGB")
@@ -194,7 +167,7 @@ def load_crop_to_ratio(img_path: str, ratio=(16,9)) -> Image.Image:
 def image_to_base64(im: Image.Image, format="JPEG"):
     from io import BytesIO
     buf = BytesIO(); im.save(buf, format=format)
-    return base64.b64encode(buf.getvalue()).decode("base64" if False else "utf-8")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 def truncate_text(s: str, n=220):
     s = s.strip()
@@ -549,7 +522,7 @@ if st.session_state.mode.startswith("1"):
 
         peak_row = tdf.loc[tdf["volume"].idxmax()]
         peak_df = pd.DataFrame([peak_row])
-        peak_df["ai_reason"] = "Oct 06에 Facebook 및 Instagram을 중심으로 LG Airconditioner 신제품에 대한 Buzz가 확산되며 Post 볼륙이 Peak를 기록했습니다."
+        peak_df["ai_reason"] = "Oct 06에 Facebook 및 Instagram을 중심으로 LG Airconditioner 신제품에 대한 Buzz가 확산되며 Post 볼륨이 Peak를 기록했습니다."
         peak_df["more"] = "자세히 보기"
         bulb = alt.Chart(peak_df).mark_text(text="💡", dy=-14, fontSize=18).encode(
             x="ts:T", y="volume:Q",
@@ -655,7 +628,7 @@ if st.session_state.mode.startswith("1"):
             st.markdown(f"<div class='insight'>🔎 {sent_read}</div>", unsafe_allow_html=True)
         spacer()
 
-        # 7) 인기 포스트 (Top3) — 이미지 경로 패치
+        # 7) 인기 포스트 (Top3)
         st.markdown("### 7) 인기 포스트 (Top3)")
         df["reach"] = (df["likes"]*5 + df["comments"]*3 + df["shares"]*6).astype(int)
         topbar_l, topbar_r = st.columns([6,2])
@@ -664,21 +637,18 @@ if st.session_state.mode.startswith("1"):
         key_map={"Engagement 순":"engagement","Like 순":"likes","Comment 순":"comments","Reach 순(추정)":"reach"}
         top3 = df.sort_values(key_map[sort_opt], ascending=False).head(3).copy()
         cols = st.columns(3)
-
-        # ★ 여기서부터는 파일명만 넘김. 확장자·대소문자 자동 처리
-        imgs = ["sample4", "sample5", "sample6"]
-
+        imgs=[["C:/gemini-test/image/Sample4.png","image/Sample4.png"],
+              ["C:/gemini-test/image/sample5.png","image/sample5.png"],
+              ["C:/gemini-test/image/sample6.png","image/sample6.png"]]
         def highlight_lg_ac_plain(text: str) -> str:
             text = truncate_text(text, 220)
             safe = html.escape(text)
             safe = re.sub(r'(?i)\bLG\b', r"<span class='hl-pink'>\g<0></span>", safe)
             safe = re.sub(r'(?i)\bair\s*conditioner(s)?\b', r"<span class='hl-pink'>\g<0></span>", safe)
             return safe
-
         for i,(_,row) in enumerate(top3.iterrows()):
             with cols[i]:
-                # 후보 생성 → 존재하는 첫 경로 선택 → 실패시 PNG 기본값
-                img_path = find_first_existing(asset_candidates(imgs[i])) or str(ASSET_DIR / f"{imgs[i]}.png")
+                img_path = find_first_existing(imgs[i]) or imgs[i][-1]
                 cap = build_listening_long_caption(row, i)
                 cap_html = highlight_lg_ac_plain(cap)
                 handle = " " + (row["user"] if row["user"].startswith("@") else "@"+row["user"].replace(" ",""))
@@ -728,8 +698,8 @@ else:
         with col: st.markdown(f"<div class='kpi'><div class='label'>{label}</div><div class='value'>{humanize(cur)}</div><div class='sub'>{mom_html} · {yoy_html}</div></div>", unsafe_allow_html=True)
     kpi_box(a,"Posts",cur_kpi["volume"],prev_kpi["volume"],yoy_kpi["volume"])
     kpi_box(b,"Engagements",cur_kpi["engagements"],prev_kpi["engagements"],yoy_kpi["engagements"])
-    kpi_box(c,"Likes",cur_kpi["likes"],prev_kpi["likes"],yoy_kpi["likes"])
-    kpi_box(d,"Comments",cur_kpi["comments"],prev_kpi["comments"],yoy_kpi["comments"])
+    kpi_box(c,"Likes",cur_kpi["likes"],prev_kpi["likes"])
+    kpi_box(d,"Comments",cur_kpi["comments"],prev_kpi["comments"])
     kpi_box(e,"Shares",cur_kpi["shares"],prev_kpi["shares"], yoy_kpi["shares"])
     spacer()
 
@@ -782,13 +752,14 @@ else:
                 key = POSTS_METRIC_MAP[metric_label]
                 p3 = get_top3_posts_for_sub(posts_all, sub, key)
                 cols_det = st.columns(3)
-
-                # ★ 파일명만 넘김. 확장자·대소문자 자동 처리
-                img_names = ["sample1", "sample2", "sample3"]
-
+                img_candidates = [
+                    ["C:/gemini-test/image/Sample1.jpg","image/Sample1.jpg"],
+                    ["C:/gemini-test/image/sample2.jpg","image/sample2.jpg"],
+                    ["C:/gemini-test/image/sample3.jpg","image/sample3.jpg"],
+                ]
                 for i,(_,r) in enumerate(p3.reset_index(drop=True).iloc[:3].iterrows()):
                     with cols_det[i]:
-                        img_path = find_first_existing(asset_candidates(img_names[i])) or str(ASSET_DIR / f"{img_names[i]}.jpg")
+                        img_path = find_first_existing(img_candidates[i]) or img_candidates[i][-1]
                         cap = build_perf_long_caption(r, i)
                         render_spr_post(r["channel"], "LuxeGlow", f" @{SUBS_DISPLAY(r['subsidiary']).lower()}",
                                         r["date"], html.escape(truncate_text(cap, 220)), img_path,
@@ -797,7 +768,7 @@ else:
 
     spacer()
 
-    # 3) Best Performance Post — 이미지 경로 패치
+    # 3) Best Performance Post
     st.markdown("### 3) Best Performance Post")
     topbar_l, topbar_r = st.columns([6,1])
     with topbar_r:
@@ -806,12 +777,14 @@ else:
     posts_df = posts_all.sort_values(PM_MAP[post_metric], ascending=False).reset_index(drop=True)
     top3 = posts_df.head(3)
     cols = st.columns(3)
-
-    monitoring_names = ["sample1", "sample2", "sample3"]  # ★ 파일명만
-
+    monitoring_imgs = [
+        ["C:/gemini-test/image/Sample1.jpg","image/Sample1.jpg"],
+        ["C:/gemini-test/image/sample2.jpg","image/sample2.jpg"],
+        ["C:/gemini-test/image/sample3.jpg","image/sample3.jpg"],
+    ]
     for i,(_,row) in enumerate(top3.iterrows()):
         with cols[i]:
-            img_path = find_first_existing(asset_candidates(monitoring_names[i])) or str(ASSET_DIR / f"{monitoring_names[i]}.jpg")
+            img_path = find_first_existing(monitoring_imgs[i]) or monitoring_imgs[i][-1]
             cap = build_perf_long_caption(row, i)
             render_spr_post(row["channel"], "LuxeGlow", f" @{SUBS_DISPLAY(row['subsidiary']).lower()}",
                             row["date"], html.escape(truncate_text(cap, 220)), img_path,
