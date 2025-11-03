@@ -1,4 +1,4 @@
-# 📊 Social Analyzer — (v0.9.6, Streamlit)
+# 📊 Social Analyzer — (v0.9.7, Streamlit)
 # ------------------------------------------------------------
 # 설치:
 # pip install -U streamlit pandas numpy altair pillow wordcloud matplotlib python-dateutil google-genai
@@ -7,6 +7,7 @@
 # ------------------------------------------------------------
 
 import os, re, html, time, base64, hashlib
+from pathlib import Path
 from datetime import datetime, timedelta, date
 
 import numpy as np
@@ -32,8 +33,17 @@ except Exception:
     genai = None
     gen_types = None
 
+# ------------------ 경로/에셋 디렉터리 ------------------
+BASE_DIR = Path(__file__).parent
+ASSET_DIRS = [
+    BASE_DIR / "image",   # <- 저장소 내 image 폴더 (권장)
+    BASE_DIR / "images",
+    BASE_DIR / "assets",
+    BASE_DIR,             # 혹시 파일이 루트에 있을 때
+]
+
 # ------------------ 공통 스타일 ------------------
-st.set_page_config(page_title="Social Analyzer", page_icon="📊", layout="wide")
+st.set_page_config(page_title="📊 Social Analyzer", page_icon="📊", layout="wide")
 
 CARD_CSS = """
 <style>
@@ -76,7 +86,7 @@ display:flex;flex-direction:column;justify-content:space-between;min-height:110p
 """
 st.markdown(CARD_CSS, unsafe_allow_html=True)
 
-# ⬇⬇⬇ 추가: 상단의 불필요한 박스(빈 진행바/슬라이더 형태) 제거
+# ⬇ 상단의 불필요한 위젯 제거 (Streamlit Cloud에서 간혹 보이는 빈 진행바)
 TOP_BAR_FIX = """
 <style>
 div[role="progressbar"] { display: none !important; }
@@ -84,7 +94,6 @@ div[role="progressbar"] { display: none !important; }
 </style>
 """
 st.markdown(TOP_BAR_FIX, unsafe_allow_html=True)
-# ⬆⬆⬆ 여기까지만 추가
 
 ICON = {"X":"<span class='icon'>𝕏</span>", "FB":"<span class='icon'>📘</span>", "IG":"<span class='icon'>📸</span>"}
 PF_NAME = {"X":"X", "FB":"Facebook", "IG":"Instagram"}
@@ -148,20 +157,55 @@ def fmt_dt(dt):
     if s.startswith("0"): s = s[1:]
     return s
 
-# 이미지 유틸
+# ------------------ 이미지 유틸 (Cloud/로컬 호환) ------------------
 def find_first_existing(paths: list[str]) -> str | None:
+    """
+    여러 후보 경로/파일명을 받아, 절대경로 우선 -> 저장소 내 ASSET_DIRS에서 탐색.
+    파일명 대/소문자 혼용도 보정.
+    """
     for p in paths:
-        if p and os.path.exists(p): return p
+        # 절대경로가 실제 존재하면 즉시 반환 (로컬 호환)
+        if os.path.isabs(p) and os.path.exists(p):
+            return p
+
+        # 상대 경로라면, 자산 디렉터리에서 탐색
+        for d in ASSET_DIRS:
+            cand = (d / p)
+            if cand.exists():
+                return str(cand)
+
+        # 파일명만 떼서 (대/소문자 변형 포함) 자산 디렉터리에서 탐색
+        fname = os.path.basename(p)
+        for name in {fname, fname.lower(), fname.upper()}:
+            for d in ASSET_DIRS:
+                cand = d / name
+                if cand.exists():
+                    return str(cand)
     return None
 
 def load_crop_to_ratio(img_path: str, ratio=(16,9)) -> Image.Image:
-    im = Image.open(img_path).convert("RGB")
-    rw, rh = ratio; target = rw/rh
-    w, h = im.size; cur = w/h
+    """이미지 로드 + 중앙 크롭. 실패 시 플레이스홀더 그림."""
+    try:
+        im = Image.open(img_path).convert("RGB")
+    except Exception:
+        from PIL import ImageDraw
+        im = Image.new("RGB", (1280, 720), (245, 246, 248))
+        d = ImageDraw.Draw(im)
+        d.text((32, 32), "Image not found", fill=(120, 120, 120))
+        return im
+
+    rw, rh = ratio
+    target = rw / rh
+    w, h = im.size
+    cur = w / h
     if cur > target:
-        new_w = int(h*target); left = (w-new_w)//2; im = im.crop((left,0,left+new_w,h))
+        new_w = int(h * target)
+        left = (w - new_w) // 2
+        im = im.crop((left, 0, left + new_w, h))
     else:
-        new_h = int(w/target); top = (h-new_h)//2; im = im.crop((0,top,w,top+new_h))
+        new_h = int(w / target)
+        top = (h - new_h) // 2
+        im = im.crop((0, top, w, top + new_h))
     return im
 
 def image_to_base64(im: Image.Image, format="JPEG"):
@@ -173,7 +217,7 @@ def truncate_text(s: str, n=220):
     s = s.strip()
     return (s if len(s) <= n else s[:n-1].rstrip() + "…")
 
-# Sprinklr 카드 렌더러(이미지+텍스트 하나의 카드)
+# ------------------ Sprinklr 스타일 카드 렌더링 ------------------
 def render_spr_post(platform: str, author: str, handle: str, tstamp: datetime,
                     text_html: str, image_path: str, sentiment: str = "positive",
                     likes: int = 0, comments: int = 0, shares: int = 0):
@@ -637,18 +681,20 @@ if st.session_state.mode.startswith("1"):
         key_map={"Engagement 순":"engagement","Like 순":"likes","Comment 순":"comments","Reach 순(추정)":"reach"}
         top3 = df.sort_values(key_map[sort_opt], ascending=False).head(3).copy()
         cols = st.columns(3)
-        imgs=[["C:/gemini-test/image/Sample4.png","image/Sample4.png"],
-              ["C:/gemini-test/image/sample5.png","image/sample5.png"],
-              ["C:/gemini-test/image/sample6.png","image/sample6.png"]]
+
+        # ---------- 여기! 이미지 후보는 파일명만 전달 ----------
+        imgs=[["sample4.png"], ["sample5.png"], ["sample6.png"]]
+
         def highlight_lg_ac_plain(text: str) -> str:
             text = truncate_text(text, 220)
             safe = html.escape(text)
             safe = re.sub(r'(?i)\bLG\b', r"<span class='hl-pink'>\g<0></span>", safe)
             safe = re.sub(r'(?i)\bair\s*conditioner(s)?\b', r"<span class='hl-pink'>\g<0></span>", safe)
             return safe
+
         for i,(_,row) in enumerate(top3.iterrows()):
             with cols[i]:
-                img_path = find_first_existing(imgs[i]) or imgs[i][-1]
+                img_path = find_first_existing(imgs[i]) or (BASE_DIR / "image" / imgs[i][0]).as_posix()
                 cap = build_listening_long_caption(row, i)
                 cap_html = highlight_lg_ac_plain(cap)
                 handle = " " + (row["user"] if row["user"].startswith("@") else "@"+row["user"].replace(" ",""))
@@ -673,15 +719,11 @@ else:
     if start_pm>end_pm: st.error("시작일이 종료일보다 뒤일 수 없습니다."); st.stop()
 
     cur_kpi, prev_kpi, yoy_kpi, sub_cur_df, sub_prev_df, sub_yoy_df = generate_perf_month(start_pm, end_pm)
-    # 섹션 공용 게시물 데이터
     posts_all = generate_perf_posts(start_pm, end_pm)
 
-    # ▼▼▼ 추가: 항상 Top3를 보장하는 헬퍼
     def get_top3_posts_for_sub(posts_df: pd.DataFrame, sub: str, key_col: str) -> pd.DataFrame:
-        # 1) 해당 법인 상위 정렬
         sel = posts_df[posts_df["subsidiary"]==sub].sort_values(key_col, ascending=False)
         picked = sel.head(3)
-        # 2) 부족하면 전체에서 채워서 3개 맞춤
         if len(picked) < 3:
             need = 3 - len(picked)
             rest = posts_df[~posts_df.index.isin(picked.index)].sort_values(key_col, ascending=False).head(need)
@@ -698,9 +740,9 @@ else:
         with col: st.markdown(f"<div class='kpi'><div class='label'>{label}</div><div class='value'>{humanize(cur)}</div><div class='sub'>{mom_html} · {yoy_html}</div></div>", unsafe_allow_html=True)
     kpi_box(a,"Posts",cur_kpi["volume"],prev_kpi["volume"],yoy_kpi["volume"])
     kpi_box(b,"Engagements",cur_kpi["engagements"],prev_kpi["engagements"],yoy_kpi["engagements"])
-    kpi_box(c,"Likes",cur_kpi["likes"],prev_kpi["likes"])
-    kpi_box(d,"Comments",cur_kpi["comments"],prev_kpi["comments"])
-    kpi_box(e,"Shares",cur_kpi["shares"],prev_kpi["shares"], yoy_kpi["shares"])
+    kpi_box(c,"Likes",cur_kpi["likes"],prev_kpi["likes"],yoy_kpi["likes"])
+    kpi_box(d,"Comments",cur_kpi["comments"],prev_kpi["comments"],yoy_kpi["comments"])
+    kpi_box(e,"Shares",cur_kpi["shares"],prev_kpi["shares"],yoy_kpi["shares"])
     spacer()
 
     # 2) Subsidiaries — 카드 + 아래 상세(expander)
@@ -721,11 +763,10 @@ else:
     grid_cols = st.columns(3)
     medals={1:"🥇",2:"🥈",3:"🥉"}; card_idx=0
 
-    # 상세용 정렬 키 (Posts 선택 시 engagements로 대체)
     POSTS_METRIC_MAP = {"Engagements":"engagements","Likes":"likes","Comments":"comments","Shares":"shares","Posts":"engagements"}
 
     for _, row in cur_sorted.iterrows():
-        if row["subsidiary"]=="KR":  # 제외 유지
+        if row["subsidiary"]=="KR":  # 요구사항에 따라 제외
             continue
         sub=row["subsidiary"]; rank=ranks_cur[sub]
         mom = ranks_prev.get(sub, rank) - rank
@@ -747,19 +788,17 @@ else:
                 """, unsafe_allow_html=True
             )
 
-            # ▼ 상세(항상 Top3 보장) — 카드 바로 아래 생성
             with st.expander(f"{SUBS_DISPLAY(sub)} 상세 보기 — Top 3 Posts", expanded=False):
                 key = POSTS_METRIC_MAP[metric_label]
                 p3 = get_top3_posts_for_sub(posts_all, sub, key)
                 cols_det = st.columns(3)
-                img_candidates = [
-                    ["C:/gemini-test/image/Sample1.jpg","image/Sample1.jpg"],
-                    ["C:/gemini-test/image/sample2.jpg","image/sample2.jpg"],
-                    ["C:/gemini-test/image/sample3.jpg","image/sample3.jpg"],
-                ]
+
+                # ---------- 여기! 이미지 후보는 파일명만 전달 ----------
+                img_candidates = [["sample1.png"], ["sample2.png"], ["sample3.png"]]
+
                 for i,(_,r) in enumerate(p3.reset_index(drop=True).iloc[:3].iterrows()):
                     with cols_det[i]:
-                        img_path = find_first_existing(img_candidates[i]) or img_candidates[i][-1]
+                        img_path = find_first_existing(img_candidates[i]) or (BASE_DIR / "image" / img_candidates[i][0]).as_posix()
                         cap = build_perf_long_caption(r, i)
                         render_spr_post(r["channel"], "LuxeGlow", f" @{SUBS_DISPLAY(r['subsidiary']).lower()}",
                                         r["date"], html.escape(truncate_text(cap, 220)), img_path,
@@ -777,14 +816,13 @@ else:
     posts_df = posts_all.sort_values(PM_MAP[post_metric], ascending=False).reset_index(drop=True)
     top3 = posts_df.head(3)
     cols = st.columns(3)
-    monitoring_imgs = [
-        ["C:/gemini-test/image/Sample1.jpg","image/Sample1.jpg"],
-        ["C:/gemini-test/image/sample2.jpg","image/sample2.jpg"],
-        ["C:/gemini-test/image/sample3.jpg","image/sample3.jpg"],
-    ]
+
+    # ---------- 여기! 이미지 후보는 파일명만 전달 ----------
+    monitoring_imgs = [["sample1.png"], ["sample2.png"], ["sample3.png"]]
+
     for i,(_,row) in enumerate(top3.iterrows()):
         with cols[i]:
-            img_path = find_first_existing(monitoring_imgs[i]) or monitoring_imgs[i][-1]
+            img_path = find_first_existing(monitoring_imgs[i]) or (BASE_DIR / "image" / monitoring_imgs[i][0]).as_posix()
             cap = build_perf_long_caption(row, i)
             render_spr_post(row["channel"], "LuxeGlow", f" @{SUBS_DISPLAY(row['subsidiary']).lower()}",
                             row["date"], html.escape(truncate_text(cap, 220)), img_path,
